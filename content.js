@@ -1,193 +1,91 @@
-/**
- * Recall Voice Browser Memory - Content Script
- * Extracts readable page content on-device without external APIs or cloud sync.
- */
-
 (() => {
-  // Guard against re-execution
-  if (window.__RECALL_CONTENT_SCRIPT_INITIALIZED__) return;
-  window.__RECALL_CONTENT_SCRIPT_INITIALIZED__ = true;
+  if (window !== window.top) return;
 
-  const MAX_TEXT_LENGTH = 15000;
-  const DEBOUNCE_DELAY_MS = 1500;
-  let extractionTimeout = null;
+  const MAX_TOTAL_CHARS = 12000;
+  let lastIndexedUrl = "";
+  let debounceTimeout = null;
 
-  /**
-   * Check if current page is safe and valid to index.
-   * Skips browser system URLs, password inputs, sensitive credentials pages.
-   */
-  function isSafeToIndex() {
-    const url = window.location.href;
-
-    // Disallow non-http/https protocols
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      return false;
-    }
-
-    // Never index pages with active password fields to preserve privacy
-    try {
-      const passwordInput = document.querySelector('input[type="password"]');
-      if (passwordInput) {
-        console.log("[Recall] Skipping page containing password input for privacy protection.");
-        return false;
-      }
-    } catch (e) {
-      // Ignore query errors in restricted DOMs
-    }
-
-    return true;
+  function isValidHttpUrl(url) {
+    if (!url || typeof url !== "string") return false;
+    const lower = url.toLowerCase();
+    return lower.startsWith("http://") || lower.startsWith("https://");
   }
 
-  /**
-   * Find the most meaningful content container (article > [role=main] > main > body).
-   */
-  function findMainContentElement() {
-    const candidates = [
-      document.querySelector("article"),
-      document.querySelector('[role="main"]'),
-      document.querySelector("main"),
-      document.querySelector(".main-content"),
-      document.querySelector("#main-content"),
-      document.querySelector(".post-content"),
-      document.querySelector(".article-content"),
-      document.body
-    ];
+  function getReadablePageText() {
+    const mainEl = document.querySelector("article, main, [role='main']");
+    let rawText = "";
 
-    for (const el of candidates) {
-      if (el && el.innerText && el.innerText.trim().length > 100) {
-        return el;
-      }
+    if (mainEl && typeof mainEl.innerText === "string" && mainEl.innerText.trim().length > 100) {
+      rawText = mainEl.innerText;
+    } else if (document.body && typeof document.body.innerText === "string") {
+      rawText = document.body.innerText;
+    } else if (document.body && typeof document.body.textContent === "string") {
+      rawText = document.body.textContent;
     }
-    return document.body;
+
+    return (rawText || "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
   }
 
-  /**
-   * Extract clean, human-readable text from an element while ignoring
-   * scripts, styles, navigation, footers, headers, ads, and forms.
-   */
-  function extractReadableText() {
-    if (!isSafeToIndex()) return null;
+  function extractAndSendPage() {
+    const currentUrl = window.location.href;
+    if (!isValidHttpUrl(currentUrl)) return;
 
-    const root = findMainContentElement();
-    if (!root) return null;
+    const title = (document.title || window.location.hostname || "Untitled Page").trim();
+    const fullBody = getReadablePageText();
 
-    // Clone root node to safely prune non-content elements without mutating DOM
-    const clone = root.cloneNode(true);
+    const maxAllowedBody = Math.max(0, MAX_TOTAL_CHARS - title.length - 1);
+    const bodyText = fullBody.slice(0, maxAllowedBody).trim();
+    const totalChars = title.length + (bodyText ? bodyText.length + 1 : 0);
 
-    // Elements to aggressively strip out
-    const tagsToRemove = [
-      "script",
-      "style",
-      "noscript",
-      "nav",
-      "footer",
-      "header",
-      "aside",
-      "svg",
-      "canvas",
-      "iframe",
-      "form",
-      "input",
-      "textarea",
-      "select",
-      "button",
-      "dialog",
-      "[aria-hidden='true']",
-      ".ad",
-      ".ads",
-      ".advertisement",
-      ".social-share",
-      ".cookie-banner",
-      ".modal"
-    ];
+    const payload = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      url: currentUrl,
+      title: title,
+      text: bodyText,
+      domain: window.location.hostname.replace(/^www\./i, ""),
+      timestamp: Date.now()
+    };
 
-    tagsToRemove.forEach((selector) => {
-      try {
-        const matches = clone.querySelectorAll(selector);
-        matches.forEach((node) => node.remove());
-      } catch (err) {
-        // Selector might not be supported in some edge cases
-      }
-    });
-
-    // Extract text and normalize excess whitespaces
-    let rawText = clone.innerText || clone.textContent || "";
-    let cleanedText = rawText
-      .replace(/[\r\n\t]+/g, " ")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-
-    // Enforce 15,000 characters limit
-    if (cleanedText.length > MAX_TEXT_LENGTH) {
-      cleanedText = cleanedText.slice(0, MAX_TEXT_LENGTH);
-    }
-
-    // Discard empty or trivial pages
-    if (cleanedText.length < 30) {
-      return null;
-    }
-
-    return cleanedText;
-  }
-
-  /**
-   * Index and send page data to the background service worker.
-   */
-  function indexCurrentPage() {
-    try {
-      const text = extractReadableText();
-      if (!text) return;
-
-      const pageData = {
-        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-        url: window.location.href,
-        title: (document.title || window.location.hostname || "Untitled Page").trim(),
-        text: text,
-        domain: window.location.hostname.replace(/^www\./i, ""),
-        timestamp: Date.now()
-      };
-
-      chrome.runtime.sendMessage(
-        {
-          type: "INDEX_PAGE",
-          data: pageData
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            // Extension context might be invalidated or service worker asleep
-            console.debug("[Recall] Message dispatch:", chrome.runtime.lastError.message);
-          } else if (response && response.status === "stored") {
-            console.log(`[Recall] Successfully indexed: "${pageData.title}" (${pageData.text.length} chars)`);
-          }
+    chrome.runtime.sendMessage(
+      {
+        type: "INDEX_PAGE",
+        data: payload
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn("[Recall Content] Background error:", chrome.runtime.lastError.message);
+        } else if (response && response.status === "stored") {
+          lastIndexedUrl = currentUrl;
+          console.log(`Page saved: ${title} – ${totalChars} characters`);
         }
-      );
-    } catch (error) {
-      console.warn("[Recall] Indexing error:", error);
-    }
+      }
+    );
   }
 
-  /**
-   * Debounced runner to avoid excessive calls on rapid DOM shifts or SPAs
-   */
-  function scheduleIndexing() {
-    if (extractionTimeout) clearTimeout(extractionTimeout);
-    extractionTimeout = setTimeout(indexCurrentPage, DEBOUNCE_DELAY_MS);
+  function scheduleExtraction(delay = 400) {
+    if (debounceTimeout) clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(() => {
+      extractAndSendPage();
+    }, delay);
   }
 
-  // Initial indexing upon document idle
-  scheduleIndexing();
+  scheduleExtraction(300);
 
-  // Handle Single Page Applications (SPA) navigation changes
-  let lastUrl = window.location.href;
-  const observer = new MutationObserver(() => {
-    if (window.location.href !== lastUrl) {
-      lastUrl = window.location.href;
-      scheduleIndexing();
+  if (document.readyState !== "complete") {
+    window.addEventListener("load", () => scheduleExtraction(400), { once: true });
+    document.addEventListener("DOMContentLoaded", () => scheduleExtraction(400), { once: true });
+  }
+
+  window.addEventListener("popstate", () => scheduleExtraction(400));
+  window.addEventListener("hashchange", () => scheduleExtraction(400));
+
+  let currentUrlTracker = window.location.href;
+  setInterval(() => {
+    if (window.location.href !== currentUrlTracker) {
+      currentUrlTracker = window.location.href;
+      if (currentUrlTracker !== lastIndexedUrl) {
+        scheduleExtraction(500);
+      }
     }
-  });
-
-  observer.observe(document, { subtree: true, childList: true });
-
-  window.addEventListener("popstate", scheduleIndexing);
-  window.addEventListener("hashchange", scheduleIndexing);
+  }, 1000);
 })();

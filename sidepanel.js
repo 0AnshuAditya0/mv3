@@ -1,25 +1,35 @@
-/**
- * Recall Voice Browser Memory - Side Panel Controller
- * Handles local on-device searching, voice input, tab automation commands, and keyboard navigation.
- */
-
 (() => {
-  // --- DOM Elements ---
   const commandInput = document.getElementById("command-input");
   const clearBtn = document.getElementById("clear-btn");
   const micBtn = document.getElementById("mic-btn");
+  const searchIcon = document.getElementById("search-icon");
   const storageCountBadge = document.getElementById("storage-count-badge");
   const resultsList = document.getElementById("results-list");
   const resultsMeta = document.getElementById("results-meta");
   const resultsCount = document.getElementById("results-count");
   const statusBanner = document.getElementById("status-banner");
+  const bannerIcon = document.getElementById("banner-icon");
   const bannerText = document.getElementById("banner-text");
   const initialState = document.getElementById("initial-state");
   const emptyState = document.getElementById("empty-state");
   const loadingState = document.getElementById("loading-state");
   const chipButtons = document.querySelectorAll(".chip");
+  const clearMemoryBtn = document.getElementById("clear-memory-btn");
 
-  // --- State Variables ---
+  const STOP_WORDS = new Set([
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+    "as", "at", "be", "because", "been", "before", "being", "below", "between", "both", "but", "by",
+    "can", "could", "did", "do", "does", "doing", "down", "during", "each", "few", "for", "from",
+    "further", "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself",
+    "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "just", "me", "more", "most",
+    "my", "myself", "no", "nor", "not", "now", "of", "off", "on", "once", "only", "or", "other", "our",
+    "ours", "ourselves", "out", "over", "own", "s", "same", "she", "should", "so", "some", "such",
+    "t", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these",
+    "they", "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "we",
+    "were", "what", "when", "where", "which", "while", "who", "whom", "why", "will", "with", "would",
+    "you", "your", "yours", "yourself", "yourselves"
+  ]);
+
   let pagesMemory = [];
   let currentSearchResults = [];
   let selectedResultIndex = -1;
@@ -27,98 +37,163 @@
   let isListening = false;
   let bannerTimeout = null;
 
-  // ==========================================================================
-  // Initialization & Memory Sync
-  // ==========================================================================
-
   async function init() {
-    setupSpeechRecognition();
+    focusCommandInput();
     setupEventListeners();
-    await loadPagesFromStorage();
+    await loadPagesFromStorage(false);
 
-    // Auto-focus the command input immediately on open
-    setTimeout(() => {
-      commandInput.focus();
-    }, 50);
-
-    // Watch for realtime storage changes
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === "local" && changes.pages) {
-        pagesMemory = changes.pages.newValue || [];
-        updateStorageCountBadge();
-        if (commandInput.value.trim().length > 0) {
-          executeSearch(commandInput.value.trim());
-        }
+        pagesMemory = sanitizePagesArray(changes.pages.newValue);
+        updateStorageCountBadge(true);
       }
+    });
+
+    if (chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg && msg.type === "PAGE_COUNT_UPDATED") {
+          if (typeof msg.count === "number") {
+            setStorageBadgeCount(msg.count, true);
+          }
+          loadPagesFromStorage(true);
+        }
+      });
+    }
+
+    window.addEventListener("focus", () => {
+      focusCommandInput();
+      loadPagesFromStorage(true);
     });
   }
 
-  /**
-   * Load stored pages from chrome.storage.local into in-memory array
-   */
-  async function loadPagesFromStorage() {
+  function focusCommandInput() {
+    if (!commandInput) return;
+    requestAnimationFrame(() => {
+      commandInput.focus();
+    });
+    setTimeout(() => {
+      commandInput.focus();
+    }, 60);
+  }
+
+  function sanitizePagesArray(raw) {
+    if (Array.isArray(raw)) return raw;
+    return [];
+  }
+
+  async function loadPagesFromStorage(animate = false) {
     return new Promise((resolve) => {
       chrome.storage.local.get({ pages: [] }, (data) => {
-        pagesMemory = Array.isArray(data.pages) ? data.pages : [];
-        updateStorageCountBadge();
+        if (!data || !Array.isArray(data.pages)) {
+          pagesMemory = [];
+          chrome.storage.local.set({ pages: [] });
+        } else {
+          pagesMemory = data.pages;
+        }
+        updateStorageCountBadge(animate);
         resolve(pagesMemory);
       });
     });
   }
 
-  function updateStorageCountBadge() {
-    const count = pagesMemory.length;
+  function setStorageBadgeCount(count, animate = false) {
+    if (!storageCountBadge) return;
     storageCountBadge.textContent = `${count} page${count === 1 ? "" : "s"}`;
+    if (animate) {
+      storageCountBadge.classList.remove("count-bump");
+      void storageCountBadge.offsetWidth;
+      storageCountBadge.classList.add("count-bump");
+      setTimeout(() => {
+        storageCountBadge.classList.remove("count-bump");
+      }, 400);
+    }
   }
 
-  // ==========================================================================
-  // Tab Control Automation Commands
-  // ==========================================================================
+  function updateStorageCountBadge(animate = false) {
+    setStorageBadgeCount(pagesMemory.length, animate);
+  }
 
-  /**
-   * Evaluates if text matches a Tab Control command.
-   * If yes, executes it and returns true. Otherwise returns false.
-   */
+  function showStatusBanner(message, type = "success") {
+    if (bannerTimeout) clearTimeout(bannerTimeout);
+
+    bannerText.textContent = message;
+
+    if (bannerIcon) {
+      if (type === "success") {
+        bannerIcon.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        `;
+      } else if (type === "error") {
+        bannerIcon.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        `;
+      } else {
+        bannerIcon.innerHTML = `
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        `;
+      }
+    }
+
+    statusBanner.className = `status-banner banner-${type}`;
+    statusBanner.classList.remove("hidden");
+
+    bannerTimeout = setTimeout(() => {
+      statusBanner.classList.add("hidden");
+    }, 2500);
+  }
+
   async function handleTabCommands(rawText) {
     const text = rawText.toLowerCase().trim().replace(/[?!.]+$/, "");
 
-    // 1. Close duplicates
     if (
       text === "close duplicates" ||
       text === "close duplicate tabs" ||
-      text === "remove duplicate tabs" ||
       text === "remove duplicates" ||
-      text === "dedupe tabs"
+      text === "remove duplicate tabs" ||
+      text === "dedupe tabs" ||
+      text === "delete duplicate tabs"
     ) {
       await executeCloseDuplicates();
       return true;
     }
 
-    // 2. Close other tabs / close all except this one
     if (
       text === "close other tabs" ||
       text === "close others" ||
-      text === "close all except this one" ||
+      text === "close other" ||
       text === "close all except this" ||
-      text === "close every tab except this one"
+      text === "close all except this one" ||
+      text === "close tabs except this" ||
+      text === "close every tab except this" ||
+      text === "close every tab except this one" ||
+      text === "close all other tabs"
     ) {
       await executeCloseOtherTabs();
       return true;
     }
 
-    // 3. Tab count: "how many tabs"
     if (
       text === "how many tabs" ||
       text === "how many tabs do i have" ||
       text === "count tabs" ||
       text === "tab count" ||
-      text === "number of tabs"
+      text === "number of tabs" ||
+      text === "tabs count"
     ) {
       await executeCountTabs();
       return true;
     }
 
-    // 4. Group tabs by domain
     if (
       text === "group tabs by domain" ||
       text === "group tabs" ||
@@ -129,29 +204,32 @@
       return true;
     }
 
-    // 5. Close tabs matching domain/keyword:
-    // e.g. "close all youtube tabs", "close tabs matching reddit", "close tabs from github.com"
-    const closeDomainMatch = text.match(
-      /^(?:close all|close tabs matching|close tabs from|close)\s+([a-z0-9.-]+)\s*(?:tabs)?$/i
-    );
-    if (closeDomainMatch && closeDomainMatch[1]) {
-      const targetQuery = closeDomainMatch[1].trim();
-      // Guard against false positives like "close other" or "close duplicate"
-      if (!["other", "duplicate", "all"].includes(targetQuery)) {
-        await executeCloseDomainTabs(targetQuery);
-        return true;
+    const closeDomainRegexes = [
+      /^(?:close all|close tabs matching|close tabs from|close)\s+([a-z0-9.-]+)\s*(?:tabs)?$/i,
+      /^close all tabs from\s+([a-z0-9.-]+)$/i,
+      /^close tabs from\s+([a-z0-9.-]+)$/i
+    ];
+
+    for (const reg of closeDomainRegexes) {
+      const match = text.match(reg);
+      if (match && match[1]) {
+        const candidate = match[1].trim().toLowerCase();
+        if (!["other", "others", "duplicate", "duplicates", "all"].includes(candidate)) {
+          await executeCloseDomainTabs(candidate);
+          return true;
+        }
       }
     }
 
-    // 6. Find and focus tab:
-    // e.g. "find tab pricing", "find tab github", "find pricing tab", "switch to tab slack"
-    const findTabMatch = text.match(
-      /^(?:find tab|focus tab|switch to tab|go to tab|find)\s+(.+?)(?:\s+tab)?$/i
-    );
-    if (findTabMatch && findTabMatch[1]) {
-      const keyword = findTabMatch[1].trim();
-      // Only treat as find-tab command if user explicitly began with find/focus/switch
-      if (/^(?:find tab|focus tab|switch to tab|go to tab)/i.test(text)) {
+    const findTabRegexes = [
+      /^(?:find tab|focus tab|switch to tab|go to tab)\s+(.+)$/i,
+      /^find\s+(.+)\s+tab$/i
+    ];
+
+    for (const reg of findTabRegexes) {
+      const match = text.match(reg);
+      if (match && match[1]) {
+        const keyword = match[1].trim();
         await executeFindTab(keyword);
         return true;
       }
@@ -160,9 +238,6 @@
     return false;
   }
 
-  /**
-   * Closes duplicate tabs, keeping only one tab per unique URL
-   */
   async function executeCloseDuplicates() {
     try {
       const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -170,8 +245,8 @@
       const duplicateTabIds = [];
 
       tabs.forEach((tab) => {
-        // Normalize URL without trailing slash or hash
-        const cleanUrl = (tab.url || "").split("#")[0].replace(/\/$/, "");
+        if (!tab.url) return;
+        const cleanUrl = tab.url.split("#")[0].replace(/\/$/, "").toLowerCase();
         if (seenUrls.has(cleanUrl)) {
           duplicateTabIds.push(tab.id);
         } else {
@@ -186,18 +261,16 @@
         showStatusBanner(`Closed ${duplicateTabIds.length} duplicate tab${duplicateTabIds.length === 1 ? "" : "s"}.`, "success");
       }
     } catch (err) {
+      console.error("[Recall Sidepanel] Error closing duplicates:", err);
       showStatusBanner(`Error closing duplicates: ${err.message}`, "error");
     }
   }
 
-  /**
-   * Closes all other tabs except the currently active tab
-   */
   async function executeCloseOtherTabs() {
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!activeTab) {
-        showStatusBanner("Could not identify active tab.", "error");
+        showStatusBanner("Could not determine the active tab.", "error");
         return;
       }
 
@@ -205,19 +278,17 @@
       const tabsToClose = allTabs.filter((t) => t.id !== activeTab.id).map((t) => t.id);
 
       if (tabsToClose.length === 0) {
-        showStatusBanner("No other tabs to close.", "info");
+        showStatusBanner("No other tabs to close in this window.", "info");
       } else {
         await chrome.tabs.remove(tabsToClose);
-        showStatusBanner(`Closed ${tabsToClose.length} other tab${tabsToClose.length === 1 ? "" : "s"}. Kept current tab open.`, "success");
+        showStatusBanner(`Closed ${tabsToClose.length} other tab${tabsToClose.length === 1 ? "" : "s"}.`, "success");
       }
     } catch (err) {
+      console.error("[Recall Sidepanel] Error closing other tabs:", err);
       showStatusBanner(`Error closing other tabs: ${err.message}`, "error");
     }
   }
 
-  /**
-   * Displays tab count across windows
-   */
   async function executeCountTabs() {
     try {
       const currentTabs = await chrome.tabs.query({ currentWindow: true });
@@ -229,13 +300,11 @@
         "info"
       );
     } catch (err) {
+      console.error("[Recall Sidepanel] Error counting tabs:", err);
       showStatusBanner(`Error counting tabs: ${err.message}`, "error");
     }
   }
 
-  /**
-   * Groups tabs by domain name
-   */
   async function executeGroupTabsByDomain() {
     try {
       if (!chrome.tabs.group) {
@@ -244,20 +313,23 @@
       }
 
       const tabs = await chrome.tabs.query({ currentWindow: true });
-      const domainMap = new Map();
+      if (tabs.length === 0) {
+        showStatusBanner("No open tabs found to group.", "info");
+        return;
+      }
 
+      const domainMap = new Map();
       tabs.forEach((tab) => {
-        if (!tab.url || tab.url.startsWith("chrome://")) return;
+        if (!tab.url) return;
         try {
           const urlObj = new URL(tab.url);
           const domain = urlObj.hostname.replace(/^www\./i, "");
+          if (!domain) return;
           if (!domainMap.has(domain)) {
             domainMap.set(domain, []);
           }
           domainMap.get(domain).push(tab.id);
-        } catch (e) {
-          // Skip invalid URLs
-        }
+        } catch (e) {}
       });
 
       let groupsCreated = 0;
@@ -265,8 +337,8 @@
       let colorIdx = 0;
 
       for (const [domain, tabIds] of domainMap.entries()) {
-        if (tabIds.length > 1) {
-          const groupId = await chrome.tabs.group({ tabIds: tabIds });
+        if (tabIds.length > 0) {
+          const groupId = await chrome.tabs.group({ tabIds });
           if (chrome.tabGroups && chrome.tabGroups.update) {
             await chrome.tabGroups.update(groupId, {
               title: domain,
@@ -279,31 +351,40 @@
       }
 
       if (groupsCreated === 0) {
-        showStatusBanner("No domain with multiple tabs to group.", "info");
+        showStatusBanner("No valid web domains found to group.", "info");
       } else {
         showStatusBanner(`Grouped tabs into ${groupsCreated} domain group${groupsCreated === 1 ? "" : "s"}.`, "success");
       }
     } catch (err) {
+      console.error("[Recall Sidepanel] Error grouping tabs:", err);
       showStatusBanner(`Error grouping tabs: ${err.message}`, "error");
     }
   }
 
-  /**
-   * Closes tabs matching domain or keyword
-   */
   async function executeCloseDomainTabs(keyword) {
     try {
-      const lowerKeyword = keyword.toLowerCase();
+      const cleanKeyword = keyword.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "");
       const tabs = await chrome.tabs.query({ currentWindow: true });
-      const toClose = [];
+      let toClose = [];
 
       tabs.forEach((tab) => {
-        const titleMatch = (tab.title || "").toLowerCase().includes(lowerKeyword);
-        const urlMatch = (tab.url || "").toLowerCase().includes(lowerKeyword);
+        const titleMatch = (tab.title || "").toLowerCase().includes(cleanKeyword);
+        const urlMatch = (tab.url || "").toLowerCase().includes(cleanKeyword);
         if (titleMatch || urlMatch) {
           toClose.push(tab.id);
         }
       });
+
+      if (toClose.length === 0) {
+        const allTabs = await chrome.tabs.query({});
+        allTabs.forEach((tab) => {
+          const titleMatch = (tab.title || "").toLowerCase().includes(cleanKeyword);
+          const urlMatch = (tab.url || "").toLowerCase().includes(cleanKeyword);
+          if (titleMatch || urlMatch) {
+            toClose.push(tab.id);
+          }
+        });
+      }
 
       if (toClose.length === 0) {
         showStatusBanner(`No open tabs found matching "${keyword}".`, "info");
@@ -312,27 +393,25 @@
         showStatusBanner(`Closed ${toClose.length} tab${toClose.length === 1 ? "" : "s"} matching "${keyword}".`, "success");
       }
     } catch (err) {
-      showStatusBanner(`Error closing tabs: ${err.message}`, "error");
+      console.error("[Recall Sidepanel] Error closing domain tabs:", err);
+      showStatusBanner(`Error closing domain tabs: ${err.message}`, "error");
     }
   }
 
-  /**
-   * Finds and activates a tab matching title or URL keyword
-   */
   async function executeFindTab(keyword) {
     try {
-      const lowerKeyword = keyword.toLowerCase();
+      const cleanKeyword = keyword.toLowerCase().trim();
       const allTabs = await chrome.tabs.query({});
       let bestMatch = null;
 
       for (const tab of allTabs) {
-        const titleLower = (tab.title || "").toLowerCase();
-        const urlLower = (tab.url || "").toLowerCase();
+        const title = (tab.title || "").toLowerCase();
+        const url = (tab.url || "").toLowerCase();
 
-        if (titleLower.includes(lowerKeyword)) {
+        if (title.includes(cleanKeyword)) {
           bestMatch = tab;
           break;
-        } else if (urlLower.includes(lowerKeyword) && !bestMatch) {
+        } else if (url.includes(cleanKeyword) && !bestMatch) {
           bestMatch = tab;
         }
       }
@@ -342,26 +421,29 @@
         if (bestMatch.windowId) {
           await chrome.windows.update(bestMatch.windowId, { focused: true });
         }
-        showStatusBanner(`Switched to: "${bestMatch.title || bestMatch.url}"`, "success");
+        showStatusBanner(`Switched to tab: "${bestMatch.title || bestMatch.url}"`, "success");
       } else {
-        showStatusBanner(`No open tab found matching "${keyword}".`, "info");
+        showStatusBanner(`No open tab found matching "${keyword}".`, "error");
       }
     } catch (err) {
+      console.error("[Recall Sidepanel] Error finding tab:", err);
       showStatusBanner(`Error switching tab: ${err.message}`, "error");
     }
   }
 
-  // ==========================================================================
-  // Search Engine & Ranking Algorithm
-  // ==========================================================================
+  function extractMeaningfulKeywords(query) {
+    const cleanText = query.toLowerCase().replace(/[^a-z0-9\s]/gi, " ");
+    const rawTokens = cleanText.split(/\s+/).filter((t) => t.length > 0);
+    let filtered = rawTokens.filter((token) => token.length > 1 && !STOP_WORDS.has(token));
+    if (filtered.length === 0) {
+      filtered = rawTokens.filter((token) => token.length > 1);
+    }
+    if (filtered.length === 0) {
+      filtered = rawTokens;
+    }
+    return Array.from(new Set(filtered));
+  }
 
-  /**
-   * Fast in-memory keyword search over stored pages with multi-factor scoring
-   * - Title match weight (15x)
-   * - Exact phrase match weight (25x)
-   * - Word token match frequency & density
-   * - Recency boost (logarithmic boost favoring recent days)
-   */
   function executeSearch(query) {
     selectedResultIndex = -1;
     const trimmed = query.trim();
@@ -371,170 +453,123 @@
       return;
     }
 
-    const lowerQuery = trimmed.toLowerCase();
-    const queryTokens = lowerQuery.split(/\s+/).filter((t) => t.length > 0);
-    const now = Date.now();
+    showLoadingState();
 
-    const scoredResults = [];
+    setTimeout(() => {
+      performNaturalLanguageSearch(trimmed);
+    }, 120);
+  }
+
+  function performNaturalLanguageSearch(rawQuery) {
+    if (!pagesMemory || pagesMemory.length === 0) {
+      renderResults([], [], rawQuery);
+      return;
+    }
+
+    const keywords = extractMeaningfulKeywords(rawQuery);
+    if (keywords.length === 0) {
+      renderResults([], [], rawQuery);
+      return;
+    }
+
+    const lowerQuery = rawQuery.toLowerCase().trim();
+    const now = Date.now();
+    const scoredList = [];
 
     for (let i = 0; i < pagesMemory.length; i++) {
       const page = pagesMemory[i];
+      if (!page) continue;
+
       const titleLower = (page.title || "").toLowerCase();
       const textLower = (page.text || "").toLowerCase();
       const domainLower = (page.domain || "").toLowerCase();
 
-      let score = 0;
-      let matchedTokensCount = 0;
+      let matchedKeywords = [];
+      let titleHits = 0;
+      let contentHits = 0;
+      let domainHits = 0;
+      let totalFrequency = 0;
 
-      // 1. Exact phrase match bonus
+      keywords.forEach((kw) => {
+        let isMatched = false;
+
+        if (titleLower.includes(kw)) {
+          titleHits++;
+          isMatched = true;
+        }
+
+        if (domainLower.includes(kw)) {
+          domainHits++;
+          isMatched = true;
+        }
+
+        if (textLower.includes(kw)) {
+          contentHits++;
+          isMatched = true;
+          const reg = new RegExp(escapeRegExp(kw), "g");
+          const occurrences = (textLower.match(reg) || []).length;
+          totalFrequency += Math.min(occurrences, 8);
+        }
+
+        if (isMatched) {
+          matchedKeywords.push(kw);
+        }
+      });
+
+      const matchCount = matchedKeywords.length;
+      if (matchCount === 0) continue;
+
+      let score = matchCount * 150;
+      score += titleHits * 90;
+      score += contentHits * 25;
+      score += domainHits * 35;
+      score += totalFrequency * 3;
+
       if (titleLower.includes(lowerQuery)) {
-        score += 50;
+        score += 350;
       }
       if (textLower.includes(lowerQuery)) {
-        score += 25;
+        score += 180;
       }
 
-      // 2. Token matches across Title, Domain, and Body
-      queryTokens.forEach((token) => {
-        let tokenFound = false;
+      const ageHours = Math.max(0, (now - (page.timestamp || now)) / 3600000);
+      score += Math.max(0, 30 - Math.min(30, ageHours / 24));
 
-        // Title token match (High weight)
-        if (titleLower.includes(token)) {
-          score += 15;
-          tokenFound = true;
-        }
-
-        // Domain match
-        if (domainLower.includes(token)) {
-          score += 10;
-          tokenFound = true;
-        }
-
-        // Text body token occurrences
-        if (textLower.includes(token)) {
-          score += 4;
-          tokenFound = true;
-          // Count occurrences up to a reasonable cap
-          const occurrences = (textLower.match(new RegExp(escapeRegExp(token), "g")) || []).length;
-          score += Math.min(occurrences, 6);
-        }
-
-        if (tokenFound) {
-          matchedTokensCount++;
-        }
-      });
-
-      // Require at least one token match
-      if (matchedTokensCount === 0 && score === 0) {
-        continue;
-      }
-
-      // Proportional bonus for matching all query words
-      if (matchedTokensCount === queryTokens.length) {
-        score += 20;
-      }
-
-      // 3. Recency boost (Newer pages rank slightly higher)
-      // Pages viewed within last 24h get up to +10, last 7 days get up to +5
-      const ageHours = (now - (page.timestamp || now)) / (1000 * 60 * 60);
-      if (ageHours < 24) {
-        score += 10 - (ageHours / 24) * 5;
-      } else if (ageHours < 168) {
-        score += 5 - (ageHours / 168) * 3;
-      }
-
-      scoredResults.push({
+      scoredList.push({
         page,
         score,
-        matchedTokens: queryTokens
+        matchCount,
+        matchedKeywords,
+        timestamp: page.timestamp || now
       });
     }
 
-    // Sort descending by score
-    scoredResults.sort((a, b) => b.score - a.score);
-
-    currentSearchResults = scoredResults.map((item) => item.page);
-    renderResults(scoredResults, queryTokens);
-  }
-
-  /**
-   * Helper to escape special characters in regex
-   */
-  function escapeRegExp(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  /**
-   * Highlights matched tokens in a string
-   */
-  function highlightText(text, tokens) {
-    if (!text || !tokens || tokens.length === 0) return escapeHTML(text || "");
-    const escaped = escapeHTML(text);
-    const regexPattern = `(${tokens.map(escapeRegExp).join("|")})`;
-    const regex = new RegExp(regexPattern, "gi");
-    return escaped.replace(regex, '<mark class="hl">$1</mark>');
-  }
-
-  function escapeHTML(str) {
-    return str
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  /**
-   * Extracts a short snippet around the first matched search token
-   */
-  function extractBestSnippet(fullText, tokens) {
-    if (!fullText) return "";
-    const lower = fullText.toLowerCase();
-    let bestIndex = -1;
-
-    for (const token of tokens) {
-      const idx = lower.indexOf(token);
-      if (idx !== -1 && (bestIndex === -1 || idx < bestIndex)) {
-        bestIndex = idx;
+    let finalResults = scoredList;
+    if (keywords.length >= 4) {
+      const higherMatches = scoredList.filter((item) => item.matchCount >= 2);
+      if (higherMatches.length > 0) {
+        finalResults = higherMatches;
       }
     }
 
-    if (bestIndex === -1) {
-      return fullText.slice(0, 180).trim() + "...";
-    }
+    finalResults.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return (b.timestamp || 0) - (a.timestamp || 0);
+    });
 
-    const start = Math.max(0, bestIndex - 40);
-    const end = Math.min(fullText.length, bestIndex + 140);
-    let snippet = fullText.slice(start, end).trim();
-
-    if (start > 0) snippet = "..." + snippet;
-    if (end < fullText.length) snippet = snippet + "...";
-
-    return snippet;
+    currentSearchResults = finalResults.map((item) => item.page);
+    renderResults(finalResults, keywords, rawQuery);
   }
 
-  /**
-   * Human relative time (e.g. "Just now", "4m ago", "2h ago", "Yesterday", "3d ago")
-   */
-  function formatRelativeTime(timestamp) {
-    if (!timestamp) return "";
-    const elapsedSeconds = Math.floor((Date.now() - timestamp) / 1000);
-
-    if (elapsedSeconds < 60) return "Just now";
-    const minutes = Math.floor(elapsedSeconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days === 1) return "Yesterday";
-    if (days < 30) return `${days}d ago`;
-    const months = Math.floor(days / 30);
-    return `${months}mo ago`;
+  function showLoadingState() {
+    initialState.classList.add("hidden");
+    emptyState.classList.add("hidden");
+    resultsList.classList.add("hidden");
+    resultsMeta.classList.add("hidden");
+    loadingState.classList.remove("hidden");
   }
-
-  // ==========================================================================
-  // Render & UI State Management
-  // ==========================================================================
 
   function renderInitialView() {
     resultsList.innerHTML = "";
@@ -547,14 +582,23 @@
     selectedResultIndex = -1;
   }
 
-  function renderResults(results, queryTokens) {
-    initialState.classList.add("hidden");
+  function renderResults(scoredResults, searchKeywords, originalQuery) {
     loadingState.classList.add("hidden");
+    initialState.classList.add("hidden");
 
-    if (results.length === 0) {
+    if (scoredResults.length === 0) {
       resultsList.innerHTML = "";
       resultsList.classList.add("hidden");
       resultsMeta.classList.add("hidden");
+
+      const emptyTitle = emptyState.querySelector("h3");
+      const emptyDesc = emptyState.querySelector("p");
+      if (emptyTitle) {
+        emptyTitle.textContent = `No pages found for "${originalQuery}"`;
+      }
+      if (emptyDesc) {
+        emptyDesc.textContent = "Try searching with different keywords or browse pages with the extension active.";
+      }
       emptyState.classList.remove("hidden");
       return;
     }
@@ -562,12 +606,13 @@
     emptyState.classList.add("hidden");
     resultsList.classList.remove("hidden");
     resultsMeta.classList.remove("hidden");
-    resultsCount.textContent = `${results.length} matching page${results.length === 1 ? "" : "s"}`;
+    resultsCount.textContent = `${scoredResults.length} matching page${scoredResults.length === 1 ? "" : "s"}`;
 
     const fragment = document.createDocumentFragment();
 
-    results.forEach((item, index) => {
+    scoredResults.forEach((item, index) => {
       const page = item.page;
+      const highlightWords = item.matchedKeywords && item.matchedKeywords.length > 0 ? item.matchedKeywords : searchKeywords;
       const li = document.createElement("li");
       li.className = "result-item";
       li.setAttribute("role", "option");
@@ -575,9 +620,9 @@
       li.dataset.index = index;
       li.dataset.url = page.url;
 
-      const snippet = extractBestSnippet(page.text, queryTokens);
-      const highlightedTitle = highlightText(page.title || page.url, queryTokens);
-      const highlightedSnippet = highlightText(snippet, queryTokens);
+      const snippet = extractSnippetAroundKeywords(page.text, highlightWords);
+      const highlightedTitle = highlightMultipleTokens(page.title || page.url, highlightWords);
+      const highlightedSnippet = highlightMultipleTokens(snippet, highlightWords);
       const relativeTime = formatRelativeTime(page.timestamp);
 
       li.innerHTML = `
@@ -591,7 +636,7 @@
               <line x1="2" y1="12" x2="22" y2="12"></line>
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
             </svg>
-            ${escapeHTML(page.domain || "page")}
+            ${escapeHTML(page.domain || "web")}
           </span>
           <span class="time-badge">${relativeTime}</span>
         </div>
@@ -606,113 +651,102 @@
     resultsList.appendChild(fragment);
   }
 
-  /**
-   * Opens page in existing tab if already open, or creates a new tab
-   */
+  function escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function escapeHTML(str) {
+    if (!str) return "";
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function highlightMultipleTokens(text, tokens) {
+    if (!text) return "";
+    if (!tokens || tokens.length === 0) return escapeHTML(text);
+    const escaped = escapeHTML(text);
+    const validTokens = tokens.map((t) => t.trim()).filter((t) => t.length > 0);
+    if (validTokens.length === 0) return escaped;
+
+    const regexPattern = `\\b(${validTokens.map(escapeRegExp).join("|")})`;
+    const regex = new RegExp(regexPattern, "gi");
+    return escaped.replace(regex, '<mark class="hl">$1</mark>');
+  }
+
+  function extractSnippetAroundKeywords(fullText, keywords) {
+    if (!fullText) return "";
+    const lower = fullText.toLowerCase();
+    let bestIndex = -1;
+
+    for (const kw of keywords) {
+      if (!kw) continue;
+      const idx = lower.indexOf(kw);
+      if (idx !== -1 && (bestIndex === -1 || idx < bestIndex)) {
+        bestIndex = idx;
+      }
+    }
+
+    if (bestIndex === -1) {
+      return fullText.slice(0, 160).trim() + (fullText.length > 160 ? "..." : "");
+    }
+
+    const start = Math.max(0, bestIndex - 40);
+    const end = Math.min(fullText.length, bestIndex + 140);
+    let snippet = fullText.slice(start, end).trim();
+
+    if (start > 0) snippet = "..." + snippet;
+    if (end < fullText.length) snippet = snippet + "...";
+
+    return snippet;
+  }
+
+  function formatRelativeTime(timestamp) {
+    if (!timestamp) return "";
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+
+    if (elapsedSeconds < 60) return "Just now";
+    const minutes = Math.floor(elapsedSeconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "Yesterday";
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    return `${months}mo ago`;
+  }
+
   async function openPageResult(targetUrl) {
     if (!targetUrl) return;
     try {
-      const tabs = await chrome.tabs.query({});
-      const existingTab = tabs.find((t) => t.url === targetUrl);
+      const allTabs = await chrome.tabs.query({});
+      const targetNorm = targetUrl.split("#")[0].replace(/\/$/, "").toLowerCase();
+
+      const existingTab = allTabs.find((t) => {
+        if (!t.url) return false;
+        const uNorm = t.url.split("#")[0].replace(/\/$/, "").toLowerCase();
+        return uNorm === targetNorm || t.url === targetUrl;
+      });
 
       if (existingTab) {
         await chrome.tabs.update(existingTab.id, { active: true });
         if (existingTab.windowId) {
           await chrome.windows.update(existingTab.windowId, { focused: true });
         }
+        showStatusBanner(`Focused existing tab: "${existingTab.title || targetUrl}"`, "success");
       } else {
         await chrome.tabs.create({ url: targetUrl, active: true });
+        showStatusBanner("Opened page in new tab.", "success");
       }
     } catch (err) {
-      console.warn("[Recall] Error opening result:", err);
+      console.warn("[Recall Sidepanel] Error opening result:", err);
       window.open(targetUrl, "_blank");
     }
   }
-
-  /**
-   * Displays temporary feedback notification banner
-   */
-  function showStatusBanner(message, type = "success") {
-    if (bannerTimeout) clearTimeout(bannerTimeout);
-
-    bannerText.textContent = message;
-    statusBanner.className = `status-banner banner-${type}`;
-    statusBanner.classList.remove("hidden");
-
-    bannerTimeout = setTimeout(() => {
-      statusBanner.classList.add("hidden");
-    }, 4000);
-  }
-
-  // ==========================================================================
-  // Web Speech API - Voice Dictation
-  // ==========================================================================
-
-  function setupSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      micBtn.style.display = "none";
-      console.log("[Recall] Web Speech API not supported in this environment.");
-      return;
-    }
-
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
-
-    recognition.onstart = () => {
-      isListening = true;
-      micBtn.classList.add("listening");
-      commandInput.placeholder = "Listening... Speak your command or search";
-    };
-
-    recognition.onresult = async (event) => {
-      const transcript = event.results[0][0].transcript;
-      commandInput.value = transcript;
-      clearBtn.classList.remove("hidden");
-
-      // Check if user spoke a tab control command
-      const isCommand = await handleTabCommands(transcript);
-      if (!isCommand) {
-        executeSearch(transcript);
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.warn("[Recall] Speech recognition error:", event.error);
-      stopListening();
-      showStatusBanner("Voice error: " + (event.error || "mic unavailable"), "error");
-    };
-
-    recognition.onend = () => {
-      stopListening();
-    };
-  }
-
-  function toggleListening() {
-    if (!recognition) return;
-    if (isListening) {
-      recognition.stop();
-      stopListening();
-    } else {
-      try {
-        recognition.start();
-      } catch (e) {
-        console.warn("[Recall] Speech start failed:", e);
-      }
-    }
-  }
-
-  function stopListening() {
-    isListening = false;
-    micBtn.classList.remove("listening");
-    commandInput.placeholder = "What did you read? Or type a tab command...";
-  }
-
-  // ==========================================================================
-  // Keyboard Navigation & Events
-  // ==========================================================================
 
   function updateSelectedResult(newIndex) {
     const items = resultsList.querySelectorAll(".result-item");
@@ -730,20 +764,125 @@
     }
   }
 
+  function initSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return null;
+
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      isListening = true;
+      if (micBtn) micBtn.classList.add("listening");
+      if (commandInput) commandInput.placeholder = "Listening... Speak your command or search";
+    };
+
+    recognition.onresult = async (event) => {
+      if (!event.results || !event.results[0] || !event.results[0][0]) return;
+      const transcript = event.results[0][0].transcript;
+      commandInput.value = transcript;
+      clearBtn.classList.remove("hidden");
+
+      const isCommand = await handleTabCommands(transcript);
+      if (!isCommand) {
+        executeSearch(transcript);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.warn("[Recall Sidepanel] Speech recognition error:", event.error);
+      stopListening();
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        showStatusBanner("Microphone permission blocked. Click the mic icon and allow access.", "error");
+      } else if (event.error !== "no-speech") {
+        showStatusBanner("Voice error: " + (event.error || "mic unavailable"), "error");
+      }
+    };
+
+    recognition.onend = () => {
+      stopListening();
+    };
+
+    return recognition;
+  }
+
+  async function toggleListening() {
+    if (isListening) {
+      if (recognition) recognition.stop();
+      stopListening();
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showStatusBanner("Voice recognition is not supported in this browser.", "error");
+      return;
+    }
+
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (err) {
+      console.warn("[Recall Voice] getUserMedia error:", err);
+      showStatusBanner("Microphone permission blocked. Click the mic icon and allow access.", "error");
+      stopListening();
+      return;
+    }
+
+    try {
+      if (!recognition) {
+        initSpeechRecognition();
+      }
+      recognition.start();
+    } catch (err) {
+      console.warn("[Recall Voice] start error:", err);
+      showStatusBanner("Microphone permission blocked. Click the mic icon and allow access.", "error");
+      stopListening();
+    }
+  }
+
+  function stopListening() {
+    isListening = false;
+    if (micBtn) micBtn.classList.remove("listening");
+    if (commandInput) {
+      commandInput.placeholder = "What did you read? Or type a tab command...";
+    }
+  }
+
+  function clearCommandInput() {
+    commandInput.value = "";
+    clearBtn.classList.add("hidden");
+    renderInitialView();
+    focusCommandInput();
+  }
+
   function setupEventListeners() {
-    // Input typing & dynamic search
     commandInput.addEventListener("input", (e) => {
       const val = e.target.value;
       if (val.length > 0) {
         clearBtn.classList.remove("hidden");
-        executeSearch(val);
       } else {
         clearBtn.classList.add("hidden");
         renderInitialView();
       }
     });
 
-    // Enter & Arrow keys
+    if (searchIcon) {
+      searchIcon.style.cursor = "pointer";
+      searchIcon.addEventListener("click", async () => {
+        const val = commandInput.value.trim();
+        if (!val) return;
+        const wasCommand = await handleTabCommands(val);
+        if (!wasCommand) {
+          executeSearch(val);
+        }
+      });
+    }
+
     commandInput.addEventListener("keydown", async (e) => {
       const items = resultsList.querySelectorAll(".result-item");
 
@@ -752,17 +891,15 @@
         const query = commandInput.value.trim();
         if (!query) return;
 
-        // First test if it's a tab automation command
         const wasCommand = await handleTabCommands(query);
         if (wasCommand) {
           return;
         }
 
-        // Otherwise open the selected search result or the top result
         if (selectedResultIndex >= 0 && currentSearchResults[selectedResultIndex]) {
           openPageResult(currentSearchResults[selectedResultIndex].url);
-        } else if (currentSearchResults.length > 0) {
-          openPageResult(currentSearchResults[0].url);
+        } else {
+          executeSearch(query);
         }
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -778,48 +915,54 @@
         }
       } else if (e.key === "Escape") {
         e.preventDefault();
-        commandInput.value = "";
-        clearBtn.classList.add("hidden");
-        renderInitialView();
+        clearCommandInput();
       }
     });
 
-    // Clear button
     clearBtn.addEventListener("click", () => {
-      commandInput.value = "";
-      clearBtn.classList.add("hidden");
-      renderInitialView();
-      commandInput.focus();
+      clearCommandInput();
     });
 
-    // Voice button
-    micBtn.addEventListener("click", () => {
-      toggleListening();
-    });
+    if (micBtn) {
+      micBtn.addEventListener("click", () => {
+        toggleListening();
+      });
+    }
 
-    // Quick Command Chips
     chipButtons.forEach((chip) => {
       chip.addEventListener("click", async () => {
         const cmd = chip.dataset.command;
         if (cmd) {
           commandInput.value = cmd;
           clearBtn.classList.remove("hidden");
-          await handleTabCommands(cmd);
+          const handled = await handleTabCommands(cmd);
+          if (!handled) {
+            executeSearch(cmd);
+          }
         }
       });
     });
 
-    // Global keyboard shortcut: Escape to clear
+    if (clearMemoryBtn) {
+      clearMemoryBtn.addEventListener("click", async () => {
+        const confirmed = window.confirm("Are you sure you want to clear all stored page memory? This action cannot be undone.");
+        if (!confirmed) return;
+
+        chrome.storage.local.set({ pages: [] }, () => {
+          pagesMemory = [];
+          updateStorageCountBadge(true);
+          renderInitialView();
+          showStatusBanner("All browser memory wiped.", "info");
+        });
+      });
+    }
+
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && document.activeElement !== commandInput) {
-        commandInput.value = "";
-        clearBtn.classList.add("hidden");
-        renderInitialView();
-        commandInput.focus();
+      if (e.key === "Escape") {
+        clearCommandInput();
       }
     });
   }
 
-  // Run initialization
   document.addEventListener("DOMContentLoaded", init);
 })();

@@ -9,7 +9,8 @@
     "scripting",
     "sidePanel",
     "activeTab",
-    "tabGroups"
+    "tabGroups",
+    "audioCapture"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -25,7 +26,8 @@
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "side_panel": {
@@ -45,13 +47,6 @@
     "128": "icons/icon128.png"
   },
   "commands": {
-    "open_recall": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+Space",
-        "mac": "Command+Shift+Space"
-      },
-      "description": "Open Recall command bar"
-    },
     "_execute_action": {
       "suggested_key": {
         "default": "Ctrl+Shift+Space",

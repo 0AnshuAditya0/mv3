@@ -8,7 +8,6 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Header with Branding & Local Storage Stats -->
     <header class="app-header">
       <div class="logo-group">
         <div class="logo-icon">
@@ -27,7 +26,6 @@
       </div>
     </header>
 
-    <!-- Main Command Bar Input -->
     <div class="command-bar-wrapper">
       <div class="command-input-container">
         <div class="input-prefix-icon" id="search-icon">
@@ -49,7 +47,6 @@
         />
 
         <div class="input-actions">
-          <!-- Voice Dictation Button -->
           <button id="mic-btn" class="icon-btn mic-btn" title="Speak command or search (Voice control)" aria-label="Voice input">
             <svg class="mic-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -58,7 +55,6 @@
             </svg>
           </button>
 
-          <!-- Clear Input Button -->
           <button id="clear-btn" class="icon-btn clear-btn hidden" title="Clear (Esc)" aria-label="Clear input">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -71,7 +67,6 @@
       </div>
     </div>
 
-    <!-- Feedback Message Banner for executed tab commands -->
     <div id="status-banner" class="status-banner hidden" role="status">
       <div class="banner-icon" id="banner-icon">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -81,24 +76,19 @@
       <span id="banner-text" class="banner-text">Command executed</span>
     </div>
 
-    <!-- Active Results Meta -->
     <div id="results-meta" class="results-meta hidden">
       <span id="results-count">0 matching pages</span>
       <span class="meta-tip">Use ↑ ↓ and Enter to open</span>
     </div>
 
-    <!-- Results List & Dynamic States -->
     <main class="content-scrollable">
-      <!-- Search Results Container -->
       <ul id="results-list" class="results-list" role="listbox"></ul>
 
-      <!-- Loading / Searching Spinner -->
       <div id="loading-state" class="state-view hidden">
         <div class="spinner"></div>
         <p>Searching on-device memory...</p>
       </div>
 
-      <!-- Empty State: Default / Browsing Tips -->
       <div id="initial-state" class="state-view initial-state">
         <div class="hero-badge">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -134,13 +124,11 @@
         </div>
       </div>
 
-      <!-- Empty State: Zero Results -->
       <div id="empty-state" class="state-view hidden">
         <div class="empty-icon">
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            <line x1="8" y1="11" x2="14" y2="11"></line>
           </svg>
         </div>
         <h3>No matching pages found</h3>
@@ -148,14 +136,22 @@
       </div>
     </main>
 
-    <!-- Footer Security Notice -->
     <footer class="app-footer">
-      <div class="security-indicator">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-        <span>100% On-Device Memory • No Cloud • Zero External APIs</span>
+      <div class="footer-row">
+        <div class="security-indicator">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span>100% On-Device Memory</span>
+        </div>
+        <button id="clear-memory-btn" class="clear-memory-btn" type="button" title="Clear all stored page memory">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          <span>Clear all memory</span>
+        </button>
       </div>
     </footer>
   </div>

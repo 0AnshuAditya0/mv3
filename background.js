@@ -1,28 +1,53 @@
-/**
- * Recall Voice Browser Memory - Background Service Worker
- * Manages 100% on-device page storage, command shortcuts, and sidepanel initialization.
- */
+const MAX_STORED_PAGES = 500;
 
-const MAX_STORED_PAGES = 800;
-
-// Setup side panel behavior on installation and browser startup
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("[Recall] Extension installed. Setting up side panel behavior...");
+function setupSidePanelBehavior() {
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
     chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
-      console.warn("[Recall] Unable to set panel behavior:", err);
+      console.warn("[Recall Background] Error setting panel behavior:", err);
     });
   }
+}
+
+setupSidePanelBehavior();
+
+chrome.runtime.onInstalled.addListener(() => {
+  setupSidePanelBehavior();
 });
 
-/**
- * Validates whether a URL should be stored in Recall's local memory.
- * Never stores browser internal pages, extension pages, or invalid schemes.
- */
+chrome.runtime.onStartup.addListener(() => {
+  setupSidePanelBehavior();
+});
+
+if (chrome.action && chrome.action.onClicked) {
+  chrome.action.onClicked.addListener(async (tab) => {
+    try {
+      if (chrome.sidePanel && chrome.sidePanel.open) {
+        const windowId = tab && tab.windowId ? tab.windowId : (await chrome.windows.getLastFocused()).id;
+        await chrome.sidePanel.open({ windowId });
+      }
+    } catch (err) {
+      console.warn("[Recall Background] Could not open side panel on action click:", err);
+    }
+  });
+}
+
+if (chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener(async (command) => {
+    try {
+      if (chrome.sidePanel && chrome.sidePanel.open) {
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        const windowId = activeTab && activeTab.windowId ? activeTab.windowId : (await chrome.windows.getLastFocused()).id;
+        await chrome.sidePanel.open({ windowId });
+      }
+    } catch (err) {
+      console.warn("[Recall Background] Error opening side panel via command:", err);
+    }
+  });
+}
+
 function isValidMemoryUrl(url) {
   if (!url || typeof url !== "string") return false;
   const lower = url.toLowerCase().trim();
-  
   if (
     lower.startsWith("chrome://") ||
     lower.startsWith("chrome-extension://") ||
@@ -35,46 +60,17 @@ function isValidMemoryUrl(url) {
   ) {
     return false;
   }
-
   return lower.startsWith("http://") || lower.startsWith("https://");
 }
 
-/**
- * Handle incoming messages from content scripts and side panel
- */
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "INDEX_PAGE") {
-    handleIndexPage(message.data)
-      .then((res) => sendResponse({ status: "stored", count: res.total }))
-      .catch((err) => {
-        console.error("[Recall] Failed to save page:", err);
-        sendResponse({ status: "error", error: err.message });
-      });
-    return true; // Keep message channel open for async response
-  }
+function sanitizeStoragePages(raw) {
+  if (Array.isArray(raw)) return raw;
+  return [];
+}
 
-  if (message.type === "GET_STATS") {
-    chrome.storage.local.get({ pages: [] }, (data) => {
-      sendResponse({ count: data.pages ? data.pages.length : 0 });
-    });
-    return true;
-  }
-
-  if (message.type === "CLEAR_ALL_DATA") {
-    chrome.storage.local.set({ pages: [] }, () => {
-      console.log("[Recall] Local page memory cleared.");
-      sendResponse({ status: "cleared" });
-    });
-    return true;
-  }
-});
-
-/**
- * Store page in local storage, deduplicating existing URLs and capping at 800 items.
- */
 async function handleIndexPage(pageData) {
   if (!pageData || !isValidMemoryUrl(pageData.url)) {
-    return { skipped: true };
+    return { skipped: true, total: 0 };
   }
 
   return new Promise((resolve, reject) => {
@@ -83,22 +79,21 @@ async function handleIndexPage(pageData) {
         return reject(chrome.runtime.lastError);
       }
 
-      let pages = Array.isArray(result.pages) ? result.pages : [];
+      let pages = sanitizeStoragePages(result.pages);
 
-      // Remove existing entry with exact same URL to avoid duplicate clutter
-      pages = pages.filter((item) => item.url !== pageData.url);
+      pages = pages.filter((item) => item && item.url !== pageData.url);
 
-      // Prepend newest entry to the top
-      pages.unshift({
-        id: pageData.id || `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      const entry = {
+        id: pageData.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         url: pageData.url,
-        title: pageData.title || "Untitled Page",
-        text: pageData.text || "",
-        domain: pageData.domain || "",
+        title: (pageData.title || "Untitled Page").trim(),
+        text: (pageData.text || "").trim(),
+        domain: (pageData.domain || "").trim(),
         timestamp: pageData.timestamp || Date.now()
-      });
+      };
 
-      // Keep only the most recent MAX_STORED_PAGES (800)
+      pages.unshift(entry);
+
       if (pages.length > MAX_STORED_PAGES) {
         pages = pages.slice(0, MAX_STORED_PAGES);
       }
@@ -107,34 +102,42 @@ async function handleIndexPage(pageData) {
         if (chrome.runtime.lastError) {
           return reject(chrome.runtime.lastError);
         }
-        console.log(`[Recall] Storage updated. Total indexed pages: ${pages.length}`);
-        resolve({ total: pages.length });
+        const totalChars = entry.title.length + (entry.text ? entry.text.length + 1 : 0);
+        console.log(`Page saved: ${entry.title} – ${totalChars} characters`);
+        chrome.runtime.sendMessage({ type: "PAGE_COUNT_UPDATED", count: pages.length }).catch(() => {});
+        resolve({ status: "stored", total: pages.length });
       });
     });
   });
 }
 
-/**
- * Keyboard shortcuts handler via chrome.commands API.
- * Opens the side panel when Control+Shift+Space (or Command+Shift+Space) is pressed.
- */
-chrome.commands.onCommand.addListener(async (command) => {
-  console.log(`[Recall] Command received: ${command}`);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || typeof message !== "object") return;
 
-  if (command === "open_recall" || command === "_execute_action") {
-    try {
-      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (activeTab && activeTab.windowId) {
-        await chrome.sidePanel.open({ windowId: activeTab.windowId });
-        console.log(`[Recall] Side panel opened in window ${activeTab.windowId}`);
-      } else {
-        const win = await chrome.windows.getLastFocused();
-        if (win && win.id) {
-          await chrome.sidePanel.open({ windowId: win.id });
-        }
-      }
-    } catch (err) {
-      console.warn("[Recall] Could not open side panel via command:", err);
-    }
+  if (message.type === "INDEX_PAGE") {
+    handleIndexPage(message.data)
+      .then((res) => sendResponse({ status: "stored", count: res.total }))
+      .catch((err) => {
+        console.error("[Recall Background] Storage error:", err);
+        sendResponse({ status: "error", error: err.message });
+      });
+    return true;
+  }
+
+  if (message.type === "GET_STATS") {
+    chrome.storage.local.get({ pages: [] }, (result) => {
+      const pages = sanitizeStoragePages(result.pages);
+      sendResponse({ count: pages.length });
+    });
+    return true;
+  }
+
+  if (message.type === "CLEAR_ALL_DATA") {
+    chrome.storage.local.set({ pages: [] }, () => {
+      console.log("[Recall Background] Cleared all stored pages from local storage.");
+      chrome.runtime.sendMessage({ type: "PAGE_COUNT_UPDATED", count: 0 }).catch(() => {});
+      sendResponse({ status: "cleared", count: 0 });
+    });
+    return true;
   }
 });
