@@ -1,37 +1,44 @@
 # Recall — Voice Browser Memory
 
-A powerful, dark-mode-first Manifest V3 Chrome extension that remembers everything you browse and gives you complete tab control via natural language search and voice commands — running **100% locally on your device**.
+A modern, dark-mode Manifest V3 Chrome extension that automatically indexes the pages you browse and gives you complete tab control via natural language search and voice commands — running **100% locally on your device**.
 
 ---
 
 ## ⚡ Features
 
-1. **Instant On-Device Search**
-   - Extracts readable article/body text as you browse (up to 15,000 characters per page).
-   - Fast multi-factor keyword search over stored pages:
-     - **Title matches** get high weight.
-     - **Exact phrase matches** get prioritized.
-     - **Word token frequency & density** ranking.
-     - **Recency boost**: Pages browsed today or this week rank higher.
-   - Snippet generation with highlighted matching keywords.
-   - Click to focus existing tab or open in new tab.
+### 1. Natural Language On-Device Search
+- **Automatic Page Memory**: Extracts the title and visible readable body text (up to 12,000 characters) when web pages load or URLs shift in SPAs.
+- **Smart Stop-Word Filtering**: Strips common filler words (`the`, `and`, `to`, `of`, `in`, `for`, `with`, `is`, etc.) from long sentences and natural language queries.
+- **Multi-Factor Ranked Scoring**:
+  - **Keyword Matches**: Ranks pages by how many distinct query keywords appear.
+  - **Title Matches**: Heavy weighting for title hits and prefix matches.
+  - **Content & Density**: Frequency bonuses for repeated occurrences in the page body.
+  - **Recency Boost**: Decayed boost favoring pages read today or this week.
+  - **Partial Matches**: Surfaces results even if only 2–3 keywords match long natural language queries.
+- **Keyword-Highlighted Snippets**: Extracts contextual text around matching keywords with highlighted marks.
+- **Smart Tab Navigation**: Clicking a result focuses the existing tab across any open browser window if already open, or creates a new active tab.
 
-2. **Tab Automation & Control**
-   Execute instant browser actions directly from the command bar (or by voice):
-   - `close duplicates` / `remove duplicate tabs`: Closes duplicate tabs sharing identical URLs.
-   - `close other tabs` / `close all except this one`: Closes all tabs in the window except the active tab.
-   - `close all youtube tabs` / `close tabs matching <domain>`: Closes tabs matching a domain or keyword.
-   - `group tabs by domain`: Automatically groups tabs into organized, colorized Chrome Tab Groups.
-   - `how many tabs`: Displays tab count across windows.
-   - `find tab <keyword>` (e.g. `find tab pricing`): Searches open tabs and instantly switches to and focuses it.
+### 2. Tab Automation & Control
+Type commands into the bar or speak them via the microphone:
+| Command | Action |
+| --- | --- |
+| `close duplicates` | Closes duplicate tabs in the current window sharing identical URLs |
+| `close other tabs` / `close all except this` | Closes all tabs in the window except your active tab |
+| `close all youtube tabs` (or any domain) | Closes all open tabs matching the specified domain or keyword |
+| `group tabs by domain` | Automatically organizes tabs into colored, domain-named Chrome Tab Groups |
+| `how many tabs` | Reports total tabs in the current window and across all open windows |
+| `find tab [keyword]` | Searches open tabs by title/URL and switches focus directly to the match |
 
-3. **Voice Command Dictation**
-   - Click the microphone icon to dictate searches or tab commands via the built-in Web Speech API.
+### 3. Voice Input & Speech Dictation
+- Click the microphone icon to dictate searches or tab commands using the Web Speech API.
+- Requested strictly on user gesture with instant permission error guidance if blocked.
+- Completely optional: typing search and tab automation work independently without requiring microphone access.
 
-4. **100% Private & Local**
-   - No external APIs, no remote servers, no cloud telemetry.
-   - Stored in `chrome.storage.local` with a strict limit of the most recent 800 pages (oldest pruned automatically).
-   - Never saves password fields, credentials, forms, or browser internal URLs (`chrome://`, `chrome-extension://`).
+### 4. 100% On-Device Privacy & Security
+- **Zero Cloud & Zero External APIs**: All indexing, storage, searching, and speech parsing execute directly on your local machine.
+- **Auto-Pruned Storage**: Stored in `chrome.storage.local` capped at the 500 most recent pages.
+- **Sanitized Extraction**: Top-frame only execution that skips non-http(s) schemes (`chrome://`, `chrome-extension://`, `about:`, `file:`, etc.).
+- **Clear All Memory**: Footer button allows one-click wiping of all stored pages with confirmation.
 
 ---
 
@@ -39,33 +46,47 @@ A powerful, dark-mode-first Manifest V3 Chrome extension that remembers everythi
 
 1. Open Google Chrome.
 2. Navigate to `chrome://extensions/` in the address bar.
-3. Enable **Developer mode** toggle in the top-right corner.
-4. Click **Load unpacked** in the top-left corner.
-5. Select this project folder (`d:\HHGOA`).
-6. The **Recall Voice Browser Memory** extension is now installed!
+3. Enable the **Developer mode** toggle in the top-right corner.
+4. Click the **Load unpacked** button in the top-left corner.
+5. Select the repository root folder containing `manifest.json`.
+6. The **Recall Voice Browser Memory** extension is now ready to use.
 
 ---
 
-## ⌨️ Shortcuts & Usage
+## ⌨️ Shortcuts & Navigation
 
-- **Open Command Bar**: Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd> (Mac: <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>) or click the extension icon.
-- **Navigate Results**: Use <kbd>↑</kbd> and <kbd>↓</kbd> arrow keys to navigate matching pages; press <kbd>Enter</kbd> to open.
-- **Clear Input**: Press <kbd>Escape</kbd> or click the clear button.
-- **Voice Input**: Click the mic icon and speak your query or tab command.
+| Shortcut / Action | Function |
+| --- | --- |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd> (Mac: <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>) | Toggle / open the Recall side panel |
+| <kbd>Enter</kbd> | Execute keyword search or trigger a tab automation command |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Navigate through search results list |
+| <kbd>Escape</kbd> | Clear command bar and return to home view |
+| Click Result Card | Focus open tab or open page in a new tab |
+| Click Mic Icon | Start voice dictation |
 
 ---
 
 ## 📁 Project Structure
 
 ```
-d:/HHGOA/
-├── manifest.json       # Manifest V3 configuration & permissions
-├── background.js       # Service worker (local storage & shortcuts)
-├── content.js          # Readable content extractor & privacy filter
-├── sidepanel.html      # Command bar & side panel UI
-├── sidepanel.css       # Premium dark-mode glassmorphism design
-├── sidepanel.js        # Search scoring, voice recognition & tab controller
-├── generate_icons.js   # Script for generating PNG icon assets
-├── icons/              # Extension icons (16x16, 48x48, 128x128)
-└── readme.md           # Documentation & quick start guide
+├── manifest.json       # Chrome Manifest V3 configuration & permissions
+├── background.js       # Background service worker (storage, shortcuts & events)
+├── content.js          # Top-frame readable text extractor & SPA change observer
+├── sidepanel.html      # Side panel layout, command bar & quick action chips
+├── sidepanel.css       # Dark-mode glassmorphic design system
+├── sidepanel.js        # Ranked search, NLP keyword parser, voice & tab automation
+├── generate_icons.js   # Icon generator utility
+└── icons/              # Extension icons (16x16, 48x48, 128x128)
 ```
+
+---
+
+## 🔒 Permissions Used
+
+- `storage`: Persists indexed pages and settings locally in `chrome.storage.local`.
+- `tabs`: Queries, updates, activates, and closes browser tabs based on user commands.
+- `tabGroups`: Groups browser tabs by domain with color labels.
+- `sidePanel`: Powers the dedicated browser side panel UI.
+- `activeTab`: Interacts with the currently active tab for tab operations.
+- `audioCapture`: Prompts for microphone access when the user clicks the voice button.
+- `<all_urls>`: Allows the content script to extract readable page text on visited websites.
